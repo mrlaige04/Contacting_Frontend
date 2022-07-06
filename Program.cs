@@ -3,7 +3,4 @@
 
 
 var tgclient = new TelegramClientFull();
-while (true)
-{
-    
-}
+

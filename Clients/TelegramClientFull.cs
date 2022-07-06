@@ -1,6 +1,8 @@
 ﻿using System.Net;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.InputFiles;
+using File = System.IO.File;
 
 namespace Contacting_Frontend.Clients;
 using Telegram;
@@ -11,206 +13,236 @@ using Telegram.Bot.Types.ReplyMarkups;
 
 public class TelegramClientFull
 {
-    private TelegramBotClient bot = new TelegramBotClient("5482091592:AAHZy8qk4IJRO2ljGUhPgWJMFWc5e8BZHgs");
+    private static string _token = "5482091592:AAHZy8qk4IJRO2ljGUhPgWJMFWc5e8BZHgs";
+    private TelegramBotClient bot = new TelegramBotClient(token:_token);
     private apiclient api = new apiclient();
     private string currentcommand = "";
     private long chatId;
-    
-    
-    
     
     string city = "";
     int age = 0;
     string description = "";
     string male = "";
     string name = "";
-    string _photo = "";
-    
-    
-    
+    string photo_name = "";
+    string wantToSearch = "";
+
+
+    private long currentUserAnketeSearchId;
     
     public TelegramClientFull()
     {
-        var receiverOptions = new ReceiverOptions()
+        var cts = new CancellationTokenSource();
+        var cancellationToken = cts.Token;
+        var receiverOptions = new ReceiverOptions
         {
-            AllowedUpdates = new UpdateType[]
-            {
-                UpdateType.Message,
-                UpdateType.EditedMessage
-            }
+            AllowedUpdates = { }, // receive all update types
         };
-        bot.StartReceiving(UpdateHandler, ErrorHandler, receiverOptions);
-        
+        bot.StartReceiving(
+            UpdateHandler,
+            ErrorHandler,
+            receiverOptions,
+            cancellationToken
+        );
+        Console.ReadLine();
     }
 
     private async Task ErrorHandler(ITelegramBotClient bot, Exception exc, CancellationToken arg3)
     {
-        await bot.SendTextMessageAsync(chatId, "Something went wrong");
+        await bot.SendTextMessageAsync(chatId, "Something went wrong", cancellationToken: arg3);
     }
 
     private async Task UpdateHandler(ITelegramBotClient bot, Update update, CancellationToken arg3)
     {
-        var id = update.Message.From.Id;
-        var username = update.Message.From.Username;
-        var chatId = update.Message.Chat.Id;
-        
-        
-        if (update.Message.Text == "/start")
+        if (update.Type == UpdateType.Message)
         {
-            var resp = api.CreateUser(id, username);
-            if (resp.Result.StatusCode == HttpStatusCode.OK)
+            var id = update.Message.From.Id;
+            var username = update.Message.From.Username;
+            var chatId = update.Message.Chat.Id;
+            
+            if (update.Message.Text == "/start" || update.Message.Text == "/changemyankete")
             {
-                await bot.SendTextMessageAsync(chatId, text:"Your account was successfully created! Now type your name, which will be in ankete" , cancellationToken:arg3);
-                currentcommand = "name";
-            } else
-            {
-                await bot.SendTextMessageAsync(chatId, text:"Error! Maybe you already have an account." , cancellationToken:arg3);
-                currentcommand = "";
-            }
-        } else
-        {
-            if (update.Message.Type == MessageType.Text)
-            {
-                switch (currentcommand)
+                var resp = api.CreateUser(id, username);
+                if (resp.Result.StatusCode == HttpStatusCode.OK)
                 {
-                    case "name":
-                        if (currentcommand == "name")
+                    ReplyKeyboardMarkup startOrChangeAnkete = new ReplyKeyboardMarkup(new[]
+                    {
+                        new[]
                         {
-                            await bot.SendTextMessageAsync(chatId, text:"Type your city!" , cancellationToken:arg3);
-                            name = update.Message.Text;
-                            currentcommand = "city";
-
-                            Console.WriteLine(new string('-', 50));
-                            Console.WriteLine("Current command: " + currentcommand);
-                            Console.WriteLine("Name: " + name);
-                            Console.WriteLine("Male: " + male);
-                            Console.WriteLine("Age: " + age);
-                            Console.WriteLine("City: " + city);
-                            Console.WriteLine("Descrip: " + description);
-                            Console.WriteLine(new string('-', 50));
+                            new KeyboardButton("/deleteaccount"),
                         }
-                        break;
-                    case "city":
-                        if (currentcommand == "city")
+                    });
+                    await bot.SendTextMessageAsync(chatId, text:"Your account was successfully created! Now type your name, which will be in ankete" , cancellationToken:arg3, replyMarkup: startOrChangeAnkete);
+                    currentcommand = "name";
+                } else
+                {
+                    await bot.SendTextMessageAsync(chatId, text:"Error! Maybe you already have an account." , cancellationToken:arg3, replyMarkup: null);
+                    currentcommand = "";
+                }
+            } else if (update.Message.Text == "/deleteaccount")
+            {
+                try
+                {
+                    ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup(
+                        new[] {
+                            new[] {
+                                new KeyboardButton("/start"),
+                            }
+                        });
+                    api.DeleteMyAccount(id);
+                    bot.SendTextMessageAsync(chatId, text:"Your account was successfully deleted." , cancellationToken:arg3, replyMarkup: replyKeyboardMarkup);
+                    currentcommand = "";
+                }
+                catch
+                {
+                    bot.SendTextMessageAsync(chatId, text:"Error! Maybe you don't have an account." , cancellationToken:arg3);
+                }
+            } else if (update.Message.Text == "/myankete")
+            {
+                try
+                {
+                    ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup(
+                        new[]
                         {
-                            await bot.SendTextMessageAsync(chatId, text:"Type some info about you.:)" , cancellationToken:arg3);
+                            new[]
+                            {
+                                new KeyboardButton("/lookforanketes"),
+                                new KeyboardButton("/changemyankete")
+                            }
+                        });
+                    Contacting_Frontend.ApiModels.User user = api.ShowAnketa(id);
+                    await using var stream = new FileStream(user?.photo_path, FileMode.Open, FileAccess.Read);
+                    await bot.SendPhotoAsync(chatId, new InputOnlineFile(stream, user?.photo_path),
+                        caption: $"{user?.Name}, {user?.city}, {user?.age} - {user?.description}",
+                        cancellationToken: arg3, replyMarkup: replyKeyboardMarkup);
+                    Console.WriteLine(user.IsAllFieldsFillled());
+                    currentcommand = "";
+                }
+                catch
+                {
+                    await bot.SendTextMessageAsync(chatId, text:"You don't have an account. Please, choose /start to create one." , cancellationToken:arg3, replyMarkup: new ReplyKeyboardMarkup(
+                        new[]
+                        {
+                            new[]
+                            {
+                                new KeyboardButton("/start"),
+                            }
+                        }));
+                }
+            } else if (update.Message.Text == "/lookforanketes")
+            {
+                ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup(
+                    new[]
+                    {
+                        new[]
+                        {
+                            new KeyboardButton("👍"),
+                            new KeyboardButton("👎")
+                        }
+                    });
+                currentcommand = "";
+                var anketes = api.GetMales().Result;
+                foreach (var user in anketes)
+                {
+                    await using var stream = new FileStream(user?.photo_path, FileMode.Open, FileAccess.Read);
+                    await bot.SendPhotoAsync(chatId, new InputOnlineFile(stream, user?.photo_path),
+                        caption: $"{user?.Name}, {user?.city}, {user?.age} - {user?.description}",
+                        cancellationToken: arg3, replyMarkup: replyKeyboardMarkup);
+
+                    currentUserAnketeSearchId = user.TGID;
+                }
+            } else if (update.Message.Text == "👍")
+            {
+                SendLike(id, currentUserAnketeSearchId, bot);
+            }
+            else
+            {
+                if (update.Message.Type == MessageType.Text)
+                {
+                    switch (currentcommand)
+                    {
+                        case "name":
+                            name = update.Message.Text;
+                            currentcommand = "age";
+                            await bot.SendTextMessageAsync(chatId, text:"Type your age!" , cancellationToken:arg3);
+                            break;
+                        case "city":
                             city = update.Message.Text;
                             currentcommand = "description";
-                            
-                            
-                            
-                            Console.WriteLine(new string('-', 50));
-                            Console.WriteLine("Current command: " + currentcommand);
-                            Console.WriteLine("Name: " + name);
-                            Console.WriteLine("Male: " + male);
-                            Console.WriteLine("Age: " + age);
-                            Console.WriteLine("City: " + city);
-                            Console.WriteLine("Descrip: " + description);
-                            Console.WriteLine(new string('-', 50));
-                        }
-                        break;
-                    case "description":
-                        if (currentcommand == "description")
-                        {
-                            await bot.SendTextMessageAsync(chatId, text:"Your age!" , cancellationToken:arg3);
+                            await bot.SendTextMessageAsync(chatId, text:"Type some info about you.:)" , cancellationToken:arg3);
+                            break;
+                        case "description":
                             description = update.Message.Text;
-                            currentcommand = "age";
-                            
-                            
-                            Console.WriteLine(new string('-', 50));
-                            Console.WriteLine("Current command: " + currentcommand);
-                            Console.WriteLine("Name: " + name);
-                            Console.WriteLine("Male: " + male);
-                            Console.WriteLine("Age: " + age);
-                            Console.WriteLine("City: " + city);
-                            Console.WriteLine("Descrip: " + description);
-                            Console.WriteLine(new string('-', 50));
-                        }
-                        break;
-                    case "age":
-                        if (currentcommand == "age")
-                        {
-                            await bot.SendTextMessageAsync(chatId, text:"Type your male: (M/F)" , cancellationToken:arg3);
-                            age = int.Parse(update.Message.Text);
-                            currentcommand = "male";
-                            
-                            
-                            
-                            Console.WriteLine(new string('-', 50));
-                            Console.WriteLine("Current command: " + currentcommand);
-                            Console.WriteLine("Name: " + name);
-                            Console.WriteLine("Male: " + male);
-                            Console.WriteLine("Age: " + age);
-                            Console.WriteLine("City: " + city);
-                            Console.WriteLine("Descrip: " + description);
-                            Console.WriteLine(new string('-', 50));
-                        }
-                        break;
-                    case "male":
-                        if (currentcommand == "male")
-                        {
-                            await bot.SendTextMessageAsync(chatId, text:"Now send your photo!" , cancellationToken:arg3);
-                            male = update.Message.Text;
-                            //currentcommand = "photo";
-                            
-                            
-                            
-                            Console.WriteLine(new string('-', 50));
-                            Console.WriteLine("Current command: " + currentcommand);
-                            Console.WriteLine("Name: " + name);
-                            Console.WriteLine("Male: " + male);
-                            Console.WriteLine("Age: " + age);
-                            Console.WriteLine("City: " + city);
-                            Console.WriteLine("Descrip: " + description);
-                            Console.WriteLine(new string('-', 50));
-                            
-                            
-                            currentcommand = "";
-                            api.FillData(id, age:age, city, male, description, name);
-                            Contacting_Frontend.ApiModels.User user = api.ShowAnketa(id);
-                            if (user != null)
+                            currentcommand = "photo";
+                            await bot.SendTextMessageAsync(chatId, text:"Send your photo" , cancellationToken:arg3);
+                            break;
+                        case "age":
+                            ReplyKeyboardMarkup replyKeyboardMarkup = new ReplyKeyboardMarkup(
+                                new[] {
+                                    new[] {
+                                        new KeyboardButton("M"),
+                                        new KeyboardButton("F")
+                                    }
+                                });
+                            try
                             {
-                                bot.SendTextMessageAsync(update.Message.Chat.Id, text:"Your ankete is ready! ", cancellationToken:arg3);
-                                bot.SendTextMessageAsync(update.Message.Chat.Id,
-                                    text:
-                                    $"Name: {user.Name}, Age: {user.age} \\n. City: {user.city}, Male: {user.Male}, Descrip: {user.description} ",
-                                    cancellationToken: arg3);
+                                age = int.Parse(update.Message.Text);
+                                currentcommand = "male";
+                                await bot.SendTextMessageAsync(chatId, text:"Choose your male:" , replyMarkup: replyKeyboardMarkup, cancellationToken:arg3);
                             }
-                        }
-                        break;
-                    /*case "photo":
-                        if (currentcommand == "photo")
-                        {
-                            string filePath = @"E:\Bot_Znakomstva\Frontend\Contacting_Frontend\Photos";
-                            
-                            var photo = bot.GetFileAsync(update.Message.Photo.Last().FileId, cancellationToken:arg3).Result;
-                            Console.WriteLine(photo.FilePath);
-                            /*Stream photo = new FileStream(filePath + update.Message.From.Id, FileMode.OpenOrCreate);
-                            if (update.Message.Type == MessageType.Photo)
+                            catch
                             {
-                                bot.DownloadFileAsync(update.Message.Photo.Last().FileId, photo);
-                            }#1#
-                            
-                            Console.WriteLine(new string('-', 50));
-                            Console.WriteLine("Current command: " + currentcommand);
-                            Console.WriteLine("Name: " + name);
-                            Console.WriteLine("Male: " + male);
-                            Console.WriteLine("Age: " + age);
-                            Console.WriteLine("City: " + city);
-                            Console.WriteLine("Descrip: " + description);
-                            Console.WriteLine(new string('-', 50));
-                            
-                            currentcommand = "";
-                            api.FillData(id, age:age, city, male, description, name);
-                            await bot.SendTextMessageAsync(chatId, text:"Nice! That's your anketa:" , cancellationToken:arg3);
-                            api.ShowAnketa(id);
-                        }
-                        break;*/
-                    default:
-                        await bot.SendTextMessageAsync(chatId, text:"Unknown command", cancellationToken: arg3);
-                        break;
+                                await bot.SendTextMessageAsync(chatId, text: "Incorrect value. Try one more time.", cancellationToken: arg3);
+                            }
+                            break;
+                        case "male":
+                            male = update.Message.Text;
+                            currentcommand = "city";
+                            await bot.SendTextMessageAsync(chatId, text:"Type your city:" , cancellationToken:arg3, replyMarkup:null);
+                            break;
+                        default:
+                            await bot.SendTextMessageAsync(chatId, text:"Unknown command", cancellationToken: arg3);
+                            break;
+                    }
+                } else if (update.Message.Type == MessageType.Photo)
+                {
+                    if (currentcommand == "photo")
+                    {
+                        Console.WriteLine(update.Message.Photo.Last().FileId);
+                        
+                        string filePath_folder = @"E:/Bot_Znakomstva/Frontend/Contacting_Frontend/photos/";
+                          
+                        string file_path_from_telegram = bot.GetFileAsync(update.Message.Photo.Last().FileId, cancellationToken:arg3).Result.FilePath;
+                        
+                        string fullTelegramPath = $@"https://api.telegram.org/file/bot{_token}/{file_path_from_telegram}";
+                        Console.WriteLine(fullTelegramPath);
+                        WebClient webClient = new WebClient();
+                        webClient.DownloadFileAsync(new Uri(fullTelegramPath), filePath_folder+$"{id}.jpg");
+
+                        currentcommand = "";
+                        api.FillData(id, age:age, city, male, description, name, photopath: filePath_folder +$"{id}.jpg");
+                        await bot.SendTextMessageAsync(chatId, text:"Nice! Type '/myankete' to see your ankete." , cancellationToken:arg3);
+
+                        city = "";
+                        age = 0;
+                        name = "";
+                        description = "";
+                        male = "";
+                        photo_name = "";
+                    }
                 }
             }
         }
+    }
+
+
+    private void SendLike(long from, long to, ITelegramBotClient bot)
+    {
+        //api.Like(from, to);
+    }
+
+    private async void GetLike(ITelegramBotClient bot)
+    {
+        
     }
 }

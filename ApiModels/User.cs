@@ -26,6 +26,11 @@ public class User
      
     public string? description { get; set; }
     public string? city { get; set; }
+    
+    public string? photo_path { get; set; }
+
+    public bool IsAllFieldsFillled() => Name != null && Male != null && age != null && description != null && city != null && photo_path != null;
+    
 }
 
 public enum Males
